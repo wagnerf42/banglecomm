@@ -24,7 +24,7 @@ pub struct Communicator {
     paused_notifier: Notify,
     receive_notifier: Notify,
     paused: AtomicBool,
-    command_type: Mutex<Command>,
+    pub command: Mutex<Option<Command>>,
 }
 
 impl Communicator {
@@ -49,7 +49,7 @@ impl Communicator {
             paused_notifier: Notify::new(),
             receive_notifier: Notify::new(),
             paused: AtomicBool::new(false),
-            command_type: Mutex::new(Command::Nothing),
+            command: Mutex::new(None),
         })
     }
 
@@ -99,12 +99,20 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
         }
         full_message.extend(msg.iter().copied());
         if full_message.ends_with(END_CHECKSUM.as_bytes()) {
-            if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
-                let lines: Vec<&str> = decoded_msg.lines().skip(1).collect();
-                lines
-                    .iter()
-                    .take(lines.len() - 5)
-                    .for_each(|l| println!("{}", l));
+            let command = { comms.command.lock().await.take() };
+            match command {
+                Some(Command::Ls) => {
+                    if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
+                        let lines: Vec<&str> = decoded_msg.lines().skip(1).collect();
+                        lines
+                            .iter()
+                            .take(lines.len() - 5)
+                            .for_each(|l| println!("{}", l));
+                    }
+                }
+                Some(Command::SyncClock) => (),
+                None => panic!("there was nothing to receive"),
+                _ => todo!(),
             }
             comms.receive_notifier.notify_one();
             full_message.clear();

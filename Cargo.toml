@@ -12,3 +12,6 @@ futures-util="*"
 anyhow="*"
 async-trait="*"
 rustyline="*"
+time="*"
+clap={version="*", features=["derive"]}
+directories-next="*"
