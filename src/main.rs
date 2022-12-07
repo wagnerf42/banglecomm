@@ -22,7 +22,8 @@ async fn main() -> Result<()> {
 
     let mut history_file = ProjectDirs::from("", "", "BangleComm")
         .map(|proj_dirs| proj_dirs.data_local_dir().to_path_buf())
-        .unwrap_or(Path::new(".").to_path_buf());
+        .unwrap_or_else(|| Path::new(".").to_path_buf());
+    tokio::fs::create_dir_all(&history_file).await?;
     history_file.push("history.txt");
 
     let comms = Arc::new(Communicator::new().await?);
@@ -70,7 +71,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        rl.save_history("history.txt")?;
+        rl.save_history(&history_file)?; // TODO: how to async ?
     }
     if !cli.keep_connected {
         comms.disconnect().await?;
@@ -89,10 +90,39 @@ async fn sync_clock(comms: &Communicator) -> Result<()> {
     Ok(())
 }
 
+async fn download(comms: &Communicator, filename: String) -> Result<()> {
+    let msg = format!(
+        "let ab = require(\"Storage\").readArrayBuffer(\"{}\"); \
+let buff = Uint8Array(ab, 0, ab.length) ;\
+buff.forEach((c, i) => console.log(c));",
+        filename
+    );
+    *comms.command.lock().await = Some(Command::Download { filename });
+    comms.send_message(&msg).await?;
+    Ok(())
+}
+
+async fn rm(comms: &Communicator, filename: String) -> Result<()> {
+    let msg = format!("require(\"Storage\").erase(\"{}\");", filename);
+    *comms.command.lock().await = Some(Command::Rm { filename });
+    comms.send_message(&msg).await?;
+    Ok(())
+}
+
+async fn ls(comms: &Communicator) -> Result<()> {
+    let msg = "let l = require(\"Storage\").list(); l.forEach((f, i) => console.log(f));";
+    *comms.command.lock().await = Some(Command::Ls);
+    comms.send_message(msg).await?;
+    Ok(())
+}
+
 async fn execute_cli_command(comms: &Communicator, command: Command) -> Result<()> {
     match command {
         Command::Disconnect => (), // do nothing, we'll disconnect at the end
         Command::SyncClock => sync_clock(comms).await?,
+        Command::Download { filename: f } => download(comms, f).await?,
+        Command::Ls => ls(comms).await?,
+        Command::Rm { filename: f } => rm(comms, f).await?,
         _ => todo!(),
     }
     Ok(())

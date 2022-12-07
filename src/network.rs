@@ -7,7 +7,10 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-use tokio::sync::{Mutex, Notify};
+use tokio::{
+    io::AsyncWriteExt,
+    sync::{Mutex, Notify},
+};
 
 const NORDIC_UUID: &str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NORDIC_UART_TX_UUID: &str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
@@ -111,6 +114,18 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                     }
                 }
                 Some(Command::SyncClock) => (),
+                Some(Command::Download { filename: f }) => {
+                    if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
+                        let lines: Vec<&str> = decoded_msg.lines().skip(1).collect();
+                        let bytes: Vec<u8> = lines
+                            .iter()
+                            .take(lines.len() - 5)
+                            .map(|l| l.parse::<u8>().unwrap())
+                            .collect();
+                        save_file(&f, &bytes).await?;
+                    }
+                }
+                Some(Command::Rm { filename: _ }) => (),
                 None => panic!("there was nothing to receive"),
                 _ => todo!(),
             }
@@ -118,6 +133,14 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
             full_message.clear();
         }
     }
+    Ok(())
+}
+
+async fn save_file(filename: &str, file_content: &[u8]) -> Result<()> {
+    let f = tokio::fs::File::create(filename).await?;
+    let mut writer = tokio::io::BufWriter::new(f);
+    writer.write_all(file_content).await?;
+    writer.flush().await?;
     Ok(())
 }
 

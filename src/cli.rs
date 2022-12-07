@@ -28,6 +28,7 @@ pub enum Command {
     SyncCalendar { ical_filename: String },
     Ls,
     Disconnect,
+    Rm { filename: String },
 }
 
 impl FromStr for Command {
@@ -39,11 +40,13 @@ impl FromStr for Command {
         let arg = tokens.next();
         match command_type {
             "ls" => Ok(Command::Ls),
-
             "put" => Ok(Command::Upload {
                 filename: arg.unwrap_or_default().to_string(),
             }),
             "get" => Ok(Command::Download {
+                filename: arg.unwrap_or_default().to_string(),
+            }),
+            "rm" => Ok(Command::Rm {
                 filename: arg.unwrap_or_default().to_string(),
             }),
             _ => Err(()),
