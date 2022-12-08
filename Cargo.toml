@@ -15,3 +15,5 @@ rustyline="*"
 time="*"
 clap={version="*", features=["derive"]}
 directories-next="*"
+itertools="*"
+ical="*"

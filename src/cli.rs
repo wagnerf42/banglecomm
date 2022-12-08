@@ -15,20 +15,29 @@ pub struct Cli {
     #[arg(short, long)]
     pub keep_connected: bool,
 
-    /// Command to execute
+    /// Command to execute.
     #[command(subcommand)]
     pub commands: Option<Command>,
 }
 
 #[derive(Subcommand, Clone)]
 pub enum Command {
-    Upload { filename: String },
-    Download { filename: String },
+    /// Upload given file to the watch.
+    Put { filename: String },
+    /// Download given file from the watch.
+    Get { filename: String },
+    /// Synchronize the watch with the local time.
     SyncClock,
+    /// Add ical file's events as alarms.
     SyncCalendar { ical_filename: String },
+    /// List files.
     Ls,
+    /// Close connection.
     Disconnect,
+    /// Erase given file.
     Rm { filename: String },
+    /// Run given js file on the watch.
+    Run { filename: String },
 }
 
 impl FromStr for Command {
@@ -37,18 +46,13 @@ impl FromStr for Command {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut tokens = s.split_whitespace();
         let command_type = tokens.next().ok_or(())?;
-        let arg = tokens.next();
+        let arg = tokens.next().unwrap_or_default().to_string();
         match command_type {
             "ls" => Ok(Command::Ls),
-            "put" => Ok(Command::Upload {
-                filename: arg.unwrap_or_default().to_string(),
-            }),
-            "get" => Ok(Command::Download {
-                filename: arg.unwrap_or_default().to_string(),
-            }),
-            "rm" => Ok(Command::Rm {
-                filename: arg.unwrap_or_default().to_string(),
-            }),
+            "put" => Ok(Command::Put { filename: arg }),
+            "get" => Ok(Command::Get { filename: arg }),
+            "rm" => Ok(Command::Rm { filename: arg }),
+            "run" => Ok(Command::Run { filename: arg }),
             _ => Err(()),
         }
     }
