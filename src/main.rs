@@ -57,7 +57,9 @@ async fn main() -> Result<()> {
                     match line.parse::<Command>() {
                         Err(_) => println!("we cannot parse command : {} ; available commands are 'get' 'put' 'ls' 'rm' 'run'", line),
 
-                        Ok(command) => execute_cli_command(&comms, command).await?,
+                        Ok(command) => if let Err(e) = execute_cli_command(&comms, command).await {
+                            eprintln!("failed: {}", e);
+                        },
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
@@ -111,15 +113,24 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
         return Ok(());
     }
     let file_content = utils::read_file(&filename).await?;
-    let writes = file_content
-        .chunks_exact(8)
+    let mut chunks = file_content
+        .chunks(1024)
         .enumerate()
-        .map(|(i, chunk)| {
-            let numbers = chunk.iter().map(|d| d.to_string()).join(",");
-            format!("f.write(\"{}\", [{}], {});", filename, numbers, i * 8)
-        })
-        .collect::<String>();
-    let msg = format!("let f = require(\"Storage\"); {}", writes);
+        .map(|(i, chunk)| (i, chunk.iter().map(|d| d.to_string()).join(",")));
+    let file_size = file_content.len();
+    let first_chunk = chunks.next().ok_or_else(|| anyhow::anyhow!("empty file"))?;
+    let mut msg = format!(
+        "require(\"Storage\").write(\"{}\", [{}], 0, {})",
+        filename, first_chunk.1, file_size
+    );
+    msg.extend(chunks.map(|(index, chunk_msg)| {
+        format!(
+            "require(\"Storage\").write(\"{}\", [{}], {});",
+            filename,
+            chunk_msg,
+            index * 1024
+        )
+    }));
     *comms.command.lock().await = Some(Command::Put { filename });
     comms.send_message(&msg).await?;
     Ok(())

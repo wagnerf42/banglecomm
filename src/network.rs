@@ -110,7 +110,7 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                             .for_each(|l| println!("{}", l));
                     }
                 }
-                Some(Command::Put {filename: _}) => (),
+                Some(Command::Put { filename: _ }) => {}
                 Some(Command::SyncClock) => (),
                 Some(Command::Get { filename: f }) => {
                     if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
@@ -118,13 +118,14 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                         let bytes: Vec<u8> = lines
                             .iter()
                             .take(lines.len() - 5)
+                            .inspect(|l| eprintln!("{l}"))
                             .map(|l| l.parse::<u8>().unwrap())
                             .collect();
                         crate::utils::save_file(&f, &bytes).await?;
                     }
                 }
-                Some(Command::Rm { filename: _ }) => (),
-                None => panic!("there was nothing to receive"),
+                Some(Command::Rm { filename: _ }) => {}
+                None => (),
                 _ => todo!(),
             }
             comms.receive_notifier.notify_one();
