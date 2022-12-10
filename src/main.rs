@@ -90,7 +90,7 @@ async fn sync_clock(comms: &Communicator) -> Result<()> {
     let now = time::OffsetDateTime::now_utc();
     let now_in_secs = now.unix_timestamp();
     *comms.command.lock().await = Some(Command::SyncClock);
-    let msg = format!("\x10setTime({})", now_in_secs);
+    let msg = format!("\x10setTime({});", now_in_secs);
     comms.send_message(&msg).await?;
     Ok(())
 }
@@ -99,7 +99,7 @@ async fn download(comms: &Communicator, filename: String) -> Result<()> {
     let msg = format!(
         "\x10let ab = require(\"Storage\").readArrayBuffer(\"{}\"); \
 let buff = Uint8Array(ab, 0, ab.length) ;\
-buff.forEach((c, i) => console.log(c));",
+buff.forEach((c, i) => console.log('\\x10', c));",
         filename
     );
     *comms.command.lock().await = Some(Command::Get { filename });
@@ -120,12 +120,12 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
     let file_size = file_content.len();
     let first_chunk = chunks.next().ok_or_else(|| anyhow::anyhow!("empty file"))?;
     let mut msg = format!(
-        "\x10require(\"Storage\").write(\"{}\", [{}], 0, {})",
+        "\x10require(\"Storage\").write(\"{}\", [{}], 0, {});",
         filename, first_chunk.1, file_size
     );
     msg.extend(chunks.map(|(index, chunk_msg)| {
         format!(
-            "\x10require(\"Storage\").write(\"{}\", [{}], {});",
+            "require(\"Storage\").write(\"{}\", [{}], {});",
             filename,
             chunk_msg,
             index * 1024
@@ -138,7 +138,6 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
 
 async fn run(comms: &Communicator, filename: String) -> Result<()> {
     let file_content = utils::read_file(&filename).await?;
-    //TODO: eval
     let msg = std::str::from_utf8(&file_content)?;
     *comms.command.lock().await = Some(Command::Run { filename });
     comms.send_message(msg).await?;

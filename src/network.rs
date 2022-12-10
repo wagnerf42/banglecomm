@@ -13,8 +13,7 @@ const NORDIC_UUID: &str = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
 const NORDIC_UART_TX_UUID: &str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NORDIC_UART_RX_UUID: &str = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
-const END_TOKEN: &str = "8210409291035902";
-const END_CHECKSUM: &str = "8210409291035902\r\n>";
+const END_TOKEN: &str = "\x108210409291035902";
 
 pub struct Communicator {
     adapter: Adapter,
@@ -60,7 +59,7 @@ impl Communicator {
     }
 
     pub async fn send_message(&self, msg: &str) -> Result<()> {
-        let msg = format!("{}\n\x10console.log('{}');\n", msg, END_TOKEN);
+        let msg = format!("{}\n\x10console.log('\\x10{}');\n\x10", msg, END_TOKEN);
         for chunk in msg.as_bytes().chunks(16) {
             while self.paused.load(Ordering::Relaxed) {
                 self.paused_notifier.notified().await;
@@ -104,7 +103,7 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
     .lines()
     .try_filter(|line| {
         // hide all lines starting with char 10
-        futures_util::future::ready(if line.starts_with('\x10') || line == END_TOKEN {
+        futures_util::future::ready(if line.starts_with('\x10') {
             true
         } else {
             println!("{line}");
@@ -115,12 +114,19 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
         if line == END_TOKEN {
             let current_command = command.lock().await.clone();
             if let Some(Command::Get { filename: f }) = current_command {
-                todo!()
+                let bytes = full_message
+                    .split_whitespace()
+                    .map(|l| l.parse::<u8>().map_err(|e| e.into()))
+                    .collect::<Result<Vec<u8>>>()
+                    .unwrap();
+                crate::utils::save_file(&f, &bytes)
+                    .await
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             }
             receive_notifier.notify_one();
             full_message.clear();
         } else {
-            full_message.push_str(&line);
+            full_message.push_str(&line[1..]);
         }
         Ok(full_message)
     })
