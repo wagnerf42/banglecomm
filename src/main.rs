@@ -90,14 +90,14 @@ async fn sync_clock(comms: &Communicator) -> Result<()> {
     let now = time::OffsetDateTime::now_utc();
     let now_in_secs = now.unix_timestamp();
     *comms.command.lock().await = Some(Command::SyncClock);
-    let msg = format!("setTime({})", now_in_secs);
+    let msg = format!("\x10setTime({})", now_in_secs);
     comms.send_message(&msg).await?;
     Ok(())
 }
 
 async fn download(comms: &Communicator, filename: String) -> Result<()> {
     let msg = format!(
-        "let ab = require(\"Storage\").readArrayBuffer(\"{}\"); \
+        "\x10let ab = require(\"Storage\").readArrayBuffer(\"{}\"); \
 let buff = Uint8Array(ab, 0, ab.length) ;\
 buff.forEach((c, i) => console.log(c));",
         filename
@@ -120,12 +120,12 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
     let file_size = file_content.len();
     let first_chunk = chunks.next().ok_or_else(|| anyhow::anyhow!("empty file"))?;
     let mut msg = format!(
-        "require(\"Storage\").write(\"{}\", [{}], 0, {})",
+        "\x10require(\"Storage\").write(\"{}\", [{}], 0, {})",
         filename, first_chunk.1, file_size
     );
     msg.extend(chunks.map(|(index, chunk_msg)| {
         format!(
-            "require(\"Storage\").write(\"{}\", [{}], {});",
+            "\x10require(\"Storage\").write(\"{}\", [{}], {});",
             filename,
             chunk_msg,
             index * 1024
@@ -136,8 +136,37 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
     Ok(())
 }
 
-async fn parse_ical_events(filename: &str) -> Result<Vec<(String, u32)>> {
+async fn run(comms: &Communicator, filename: String) -> Result<()> {
     let file_content = utils::read_file(&filename).await?;
+    //TODO: eval
+    let msg = std::str::from_utf8(&file_content)?;
+    *comms.command.lock().await = Some(Command::Run { filename });
+    comms.send_message(msg).await?;
+    Ok(())
+}
+
+async fn parse_ical_events(filename: &str) -> Result<Vec<(String, u32)>> {
+    let file_content = utils::read_file(filename).await?;
+    let ical = ical::parser::ical::IcalParser::new(file_content.as_slice())
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no calendar"))??;
+    for event in &ical.events {
+        let mut dtstart = None;
+        let mut summary = None;
+        let mut location = None;
+        for property in &event.properties {
+            match property.name.as_str() {
+                "DTSTART" => dtstart = property.value.as_ref(),
+                "LOCATION" => location = property.value.as_ref(),
+                "SUMMARY" => summary = property.value.as_ref(),
+                _ => (),
+            }
+        }
+        eprintln!(
+            "event {:?} at time {:?} in {:?}",
+            summary, dtstart, location
+        );
+    }
     todo!()
 }
 
@@ -161,14 +190,14 @@ async fn sync_calendar(comms: &Communicator, filename: String) -> Result<()> {
 }
 
 async fn rm(comms: &Communicator, filename: String) -> Result<()> {
-    let msg = format!("require(\"Storage\").erase(\"{}\");", filename);
+    let msg = format!("\x10require(\"Storage\").erase(\"{}\");", filename);
     *comms.command.lock().await = Some(Command::Rm { filename });
     comms.send_message(&msg).await?;
     Ok(())
 }
 
 async fn ls(comms: &Communicator) -> Result<()> {
-    let msg = "let l = require(\"Storage\").list(); l.forEach((f, i) => console.log(f));";
+    let msg = "\x10let l = require(\"Storage\").list(); l.forEach((f, i) => console.log(f));";
     *comms.command.lock().await = Some(Command::Ls);
     comms.send_message(msg).await?;
     Ok(())
@@ -183,7 +212,7 @@ async fn execute_cli_command(comms: &Communicator, command: Command) -> Result<(
         Command::SyncCalendar { ical_filename: f } => sync_calendar(comms, f).await?,
         Command::Ls => ls(comms).await?,
         Command::Rm { filename: f } => rm(comms, f).await?,
-        _ => todo!(),
+        Command::Run { filename: f } => run(comms, f).await?,
     }
     Ok(())
 }

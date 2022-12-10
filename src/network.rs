@@ -2,7 +2,7 @@ use super::pairing::StdioPairingAgent;
 use super::Command;
 use anyhow::Result;
 use bluest::{Adapter, Characteristic, Device, Uuid};
-use futures_util::StreamExt;
+use futures_util::{AsyncBufReadExt, StreamExt, TryStreamExt};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -14,7 +14,7 @@ const NORDIC_UART_TX_UUID: &str = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
 const NORDIC_UART_RX_UUID: &str = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
 const END_TOKEN: &str = "8210409291035902";
-const END_CHECKSUM: &str = "8210409291035902\r\n=undefined\r\n>";
+const END_CHECKSUM: &str = "8210409291035902\r\n>";
 
 pub struct Communicator {
     adapter: Adapter,
@@ -60,7 +60,7 @@ impl Communicator {
     }
 
     pub async fn send_message(&self, msg: &str) -> Result<()> {
-        let msg = format!("{}\n;console.log('{}');\n", msg, END_TOKEN);
+        let msg = format!("{}\n\x10console.log('{}');\n", msg, END_TOKEN);
         for chunk in msg.as_bytes().chunks(16) {
             while self.paused.load(Ordering::Relaxed) {
                 self.paused_notifier.notified().await;
@@ -73,12 +73,12 @@ impl Communicator {
 }
 
 pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
-    let mut msgs = comms.rx.notify().await?;
-    let mut full_message = Vec::new();
-    while let Some(msg) = msgs.next().await {
-        let mut msg = msg?;
+    let (rx, command, receive_notifier) = (&comms.rx, &comms.command, &comms.receive_notifier);
+    let msgs = rx.notify().await?;
+    msgs.map_ok(|mut v| {
+        // pause or restart comms if we receive characters 17 or 19
         let mut pause_change = None;
-        msg.retain(|c| {
+        v.retain(|c| {
             if *c == 17 {
                 // XON: resume upload
                 pause_change = Some(false);
@@ -97,41 +97,34 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                 comms.paused_notifier.notify_one()
             }
         }
-        full_message.extend(msg.iter().copied());
-        if full_message.ends_with(END_CHECKSUM.as_bytes()) {
-            let command = { comms.command.lock().await.take() };
-            match command {
-                Some(Command::Ls) => {
-                    if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
-                        let lines: Vec<&str> = decoded_msg.lines().skip(1).collect();
-                        lines
-                            .iter()
-                            .take(lines.len() - 5)
-                            .for_each(|l| println!("{}", l));
-                    }
-                }
-                Some(Command::Put { filename: _ }) => {}
-                Some(Command::SyncClock) => (),
-                Some(Command::Get { filename: f }) => {
-                    if let Ok(decoded_msg) = std::str::from_utf8(&full_message) {
-                        let lines: Vec<&str> = decoded_msg.lines().skip(1).collect();
-                        let bytes: Vec<u8> = lines
-                            .iter()
-                            .take(lines.len() - 5)
-                            .inspect(|l| eprintln!("{l}"))
-                            .map(|l| l.parse::<u8>().unwrap())
-                            .collect();
-                        crate::utils::save_file(&f, &bytes).await?;
-                    }
-                }
-                Some(Command::Rm { filename: _ }) => {}
-                None => (),
-                _ => todo!(),
+        v
+    })
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    .into_async_read()
+    .lines()
+    .try_filter(|line| {
+        // hide all lines starting with char 10
+        futures_util::future::ready(if line.starts_with('\x10') || line == END_TOKEN {
+            true
+        } else {
+            println!("{line}");
+            false
+        })
+    })
+    .try_fold(String::new(), |mut full_message, line| async move {
+        if line == END_TOKEN {
+            let current_command = command.lock().await.clone();
+            if let Some(Command::Get { filename: f }) = current_command {
+                todo!()
             }
-            comms.receive_notifier.notify_one();
+            receive_notifier.notify_one();
             full_message.clear();
+        } else {
+            full_message.push_str(&line);
         }
-    }
+        Ok(full_message)
+    })
+    .await?;
     Ok(())
 }
 
