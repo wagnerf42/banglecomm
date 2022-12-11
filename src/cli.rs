@@ -38,6 +38,8 @@ pub enum Command {
     Rm { filename: String },
     /// Run given js file on the watch.
     Run { filename: String },
+    /// Run given code line on the watch.
+    Write { code: String },
 }
 
 impl FromStr for Command {

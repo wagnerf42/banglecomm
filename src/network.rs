@@ -147,7 +147,13 @@ async fn find_banglejs(adapter: &Adapter) -> Result<Device> {
     let mut scan = adapter.scan(&[]).await?;
     println!("scan started");
     while let Some(discovered_device) = scan.next().await {
-        if discovered_device.adv_data.services.contains(&nordic_uuid) {
+        if discovered_device
+            .device
+            .name()
+            .map(|n| n.starts_with("Bangle.js"))
+            .unwrap_or_default()
+            && discovered_device.adv_data.services.contains(&nordic_uuid)
+        {
             println!("we found it !");
             let device = discovered_device.device;
 

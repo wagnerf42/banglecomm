@@ -91,8 +91,7 @@ async fn sync_clock(comms: &Communicator) -> Result<()> {
     let now_in_secs = now.unix_timestamp();
     *comms.command.lock().await = Some(Command::SyncClock);
     let msg = format!("\x10setTime({});", now_in_secs);
-    comms.send_message(&msg).await?;
-    Ok(())
+    write(comms, &msg).await
 }
 
 async fn download(comms: &Communicator, filename: String) -> Result<()> {
@@ -131,9 +130,7 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
             index * 1024
         )
     }));
-    *comms.command.lock().await = Some(Command::Put { filename });
-    comms.send_message(&msg).await?;
-    Ok(())
+    write(comms, &msg).await
 }
 
 async fn run(comms: &Communicator, filename: String) -> Result<()> {
@@ -188,18 +185,23 @@ async fn sync_calendar(comms: &Communicator, filename: String) -> Result<()> {
     Ok(())
 }
 
-async fn rm(comms: &Communicator, filename: String) -> Result<()> {
-    let msg = format!("\x10require(\"Storage\").erase(\"{}\");", filename);
-    *comms.command.lock().await = Some(Command::Rm { filename });
-    comms.send_message(&msg).await?;
+async fn write(comms: &Communicator, code: &str) -> Result<()> {
+    *comms.command.lock().await = None;
+    comms.send_message(code).await?;
     Ok(())
 }
 
+async fn rm(comms: &Communicator, filename: String) -> Result<()> {
+    let msg = format!("\x10require(\"Storage\").erase(\"{}\");", filename);
+    write(comms, &msg).await
+}
+
 async fn ls(comms: &Communicator) -> Result<()> {
-    let msg = "\x10let l = require(\"Storage\").list(); l.forEach((f, i) => console.log(f));";
-    *comms.command.lock().await = Some(Command::Ls);
-    comms.send_message(msg).await?;
-    Ok(())
+    write(
+        comms,
+        "\x10let l = require(\"Storage\").list(); l.forEach((f, i) => console.log(f));",
+    )
+    .await
 }
 
 async fn execute_cli_command(comms: &Communicator, command: Command) -> Result<()> {
@@ -212,22 +214,7 @@ async fn execute_cli_command(comms: &Communicator, command: Command) -> Result<(
         Command::Ls => ls(comms).await?,
         Command::Rm { filename: f } => rm(comms, f).await?,
         Command::Run { filename: f } => run(comms, f).await?,
+        Command::Write { code: c } => write(comms, &c).await?,
     }
     Ok(())
-}
-
-fn escape(string: &str) -> String {
-    let mut escaped = String::new();
-    for char in string.chars() {
-        match char {
-            '.' => {
-                escaped += "\\.";
-            }
-            '*' => {
-                escaped += "\\S+";
-            }
-            c => escaped.push(c),
-        }
-    }
-    escaped
 }
