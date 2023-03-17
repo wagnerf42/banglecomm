@@ -20,7 +20,7 @@ pub struct Cli {
     pub commands: Option<Command>,
 }
 
-#[derive(Subcommand, Clone)]
+#[derive(Subcommand, Clone, Debug)]
 pub enum Command {
     /// Upload given file to the watch.
     Put { filename: String },

@@ -101,19 +101,22 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     .into_async_read()
     .lines()
-    .try_filter(|line| {
-        // hide all lines starting with char 10
-        futures_util::future::ready(if line.starts_with('\x10') {
-            true
-        } else {
-            println!("{line}");
-            false
-        })
-    })
     .try_fold(String::new(), |mut full_message, line| async move {
+        if line != END_TOKEN && line.starts_with('\x10') {
+            return Ok(full_message);
+        }
+        match command.lock().await.as_ref() {
+            Some(Command::Run { filename: _ }) => {
+                if line != END_TOKEN {
+                    println!("{line}");
+                }
+            }
+            _ => (),
+        }
+
         if line == END_TOKEN {
-            let current_command = command.lock().await.clone();
-            if let Some(Command::Get { filename: f }) = current_command {
+            //TODO: avoid re-locking
+            if let Some(Command::Get { filename: f }) = command.lock().await.as_ref() {
                 let bytes = full_message
                     .split_whitespace()
                     .map(|l| l.parse::<u8>().map_err(|e| e.into()))

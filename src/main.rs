@@ -136,8 +136,12 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
 async fn run(comms: &Communicator, filename: String) -> Result<()> {
     let file_content = utils::read_file(&filename).await?;
     let msg = std::str::from_utf8(&file_content)?;
+    let escaped_msg: String = msg
+        .split_terminator('\n')
+        .map(|line| format!("\x10{}", line))
+        .collect();
     *comms.command.lock().await = Some(Command::Run { filename });
-    comms.send_message(msg).await?;
+    comms.send_message(&escaped_msg).await?;
     Ok(())
 }
 
