@@ -36,7 +36,17 @@ async fn main() -> Result<()> {
     tokio::task::spawn(network::receive_messages(recv_comms));
 
     if let Some(command) = cli.commands {
+        let stay_alive = if let Command::App { filename: _ } = command {
+            true
+        } else {
+            false
+        };
         execute_cli_command(&comms, command).await?;
+        if stay_alive {
+            loop {
+                tokio::time::sleep(std::time::Duration::new(5, 0)).await;
+            }
+        }
     } else {
         // sync the clock
         sync_clock(&comms).await?;
@@ -133,6 +143,21 @@ async fn upload(comms: &Communicator, filename: String) -> Result<()> {
     write(comms, &msg).await
 }
 
+async fn app(comms: &Communicator, filename: String) -> Result<()> {
+    let uglified = tokio::process::Command::new("uglifyjs")
+        .arg(&filename)
+        .output()
+        .await?;
+    let escaped_msg: String = String::from_utf8(uglified.stdout)
+        .unwrap()
+        .split_terminator('\n')
+        .map(|line| format!("\x10{}", line))
+        .collect();
+    *comms.command.lock().await = Some(Command::App { filename });
+    comms.send_message(&escaped_msg).await?;
+    Ok(())
+}
+
 async fn run(comms: &Communicator, filename: String) -> Result<()> {
     let file_content = utils::read_file(&filename).await?;
     let msg = std::str::from_utf8(&file_content)?;
@@ -210,6 +235,7 @@ async fn ls(comms: &Communicator) -> Result<()> {
 
 async fn execute_cli_command(comms: &Communicator, command: Command) -> Result<()> {
     match command {
+        Command::App { filename: f } => app(comms, f).await?,
         Command::Disconnect => (), // do nothing, we'll disconnect at the end
         Command::SyncClock => sync_clock(comms).await?,
         Command::Get { filename: f } => download(comms, f).await?,

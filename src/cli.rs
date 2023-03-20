@@ -36,10 +36,12 @@ pub enum Command {
     Disconnect,
     /// Erase given file.
     Rm { filename: String },
-    /// Run given js file on the watch.
+    /// Run given js string on the watch.
     Run { filename: String },
     /// Run given code line on the watch.
     Write { code: String },
+    /// Compress then run given app code on the watch. Never exits.
+    App { filename: String },
 }
 
 impl FromStr for Command {
@@ -55,6 +57,7 @@ impl FromStr for Command {
             "get" => Ok(Command::Get { filename: arg }),
             "rm" => Ok(Command::Rm { filename: arg }),
             "run" => Ok(Command::Run { filename: arg }),
+            "app" => Ok(Command::App { filename: arg }),
             _ => Err(()),
         }
     }

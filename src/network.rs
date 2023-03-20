@@ -65,7 +65,7 @@ impl Communicator {
                 self.paused_notifier.notified().await;
             }
             self.tx.write(chunk).await?;
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            tokio::time::sleep(std::time::Duration::from_micros(100)).await;
         }
         self.receive_notifier.notified().await;
         Ok(())
@@ -107,7 +107,10 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
             return Ok(full_message);
         }
         match command.lock().await.as_ref() {
-            None | Some(Command::Run { filename: _ }) => {
+            None
+            | Some(Command::Run { filename: _ })
+            | Some(Command::App { filename: _ })
+            | Some(Command::Write { code: _ }) => {
                 if line != END_TOKEN {
                     println!("{line}");
                 }
