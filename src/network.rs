@@ -59,8 +59,9 @@ impl Communicator {
     }
 
     pub async fn send_message(&self, msg: &str) -> Result<()> {
-        let msg = format!("{}\n\x10console.log('\\x10{}');\n\x10", msg, END_TOKEN);
-        for chunk in msg.as_bytes().chunks(16) {
+        let msg = format!("{}\n\x10console.log('\\x10{}');\n", msg, END_TOKEN);
+        let max_len = self.tx.max_write_len()?;
+        for chunk in msg.as_bytes().chunks(max_len) {
             while self.paused.load(Ordering::Relaxed) {
                 self.paused_notifier.notified().await;
             }
@@ -97,7 +98,8 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                 comms.paused_notifier.notify_one()
             }
         }
-        v
+        // convert latin1 to utf8
+        v.iter().map(|&b| b as char).collect::<String>()
     })
     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
     .into_async_read()
@@ -126,14 +128,14 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
                     .map(|l| l.parse::<u8>().map_err(|e| e.into()))
                     .collect::<Result<Vec<u8>>>()
                     .unwrap();
-                crate::utils::save_file(&f, &bytes)
+                crate::utils::save_file(f, &bytes)
                     .await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             }
             receive_notifier.notify_one();
             full_message.clear();
-        } else {
-            full_message.push_str(&line[1..]);
+        } else if !line.is_empty() {
+            full_message.push_str(&line);
         }
         Ok(full_message)
     })

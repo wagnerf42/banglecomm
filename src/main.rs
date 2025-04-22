@@ -7,7 +7,7 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use rustyline::error::ReadlineError;
-use rustyline::Editor;
+use rustyline::DefaultEditor;
 
 mod network;
 use network::Communicator;
@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
         sync_clock(&comms).await?;
 
         // start the command line interface
-        let mut rl = Editor::<()>::new()?;
+        let mut rl = DefaultEditor::new()?;
         if rl.load_history(&history_file).is_err() {
             println!("No previous history.");
         }
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
             let readline = rl.readline(">> ");
             match readline {
                 Ok(line) => {
-                    rl.add_history_entry(line.as_str());
+                    rl.add_history_entry(line.as_str())?;
                     if line == "exit" {
                         break;
                     }
