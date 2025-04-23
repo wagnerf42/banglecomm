@@ -105,16 +105,14 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
     .into_async_read()
     .lines()
     .try_fold(String::new(), |mut full_message, line| async move {
-        if line != END_TOKEN && line.starts_with('\x10') {
-            return Ok(full_message);
-        }
         match command.lock().await.as_ref() {
             None
             | Some(Command::Run { filename: _ })
             | Some(Command::App { filename: _ })
             | Some(Command::Write { code: _ }) => {
-                if line != END_TOKEN {
+                if !line.starts_with('\x10') {
                     println!("{line}");
+                    return Ok(full_message);
                 }
             }
             _ => (),
@@ -134,9 +132,8 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
             }
             receive_notifier.notify_one();
             full_message.clear();
-        } else if !line.is_empty() {
-            full_message.push_str(&line);
         }
+        full_message.extend(line.chars().skip(1));
         Ok(full_message)
     })
     .await?;

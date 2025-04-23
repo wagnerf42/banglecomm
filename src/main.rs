@@ -1,6 +1,8 @@
+use chrono::{NaiveDateTime, Utc};
 use clap::Parser;
 use directories_next::ProjectDirs;
 use itertools::Itertools;
+use std::fmt::Write;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -12,7 +14,6 @@ use rustyline::DefaultEditor;
 mod network;
 use network::Communicator;
 mod pairing;
-use pairing::StdioPairingAgent;
 
 mod cli;
 use cli::Command;
@@ -151,8 +152,10 @@ async fn app(comms: &Communicator, filename: String) -> Result<()> {
     let escaped_msg: String = String::from_utf8(uglified.stdout)
         .unwrap()
         .split_terminator('\n')
-        .map(|line| format!("\x10{}", line))
-        .collect();
+        .fold(String::new(), |mut s, line| {
+            write!(&mut s, "\x10{}", line).ok();
+            s
+        });
     *comms.command.lock().await = Some(Command::App { filename });
     comms.send_message(&escaped_msg).await?;
     Ok(())
@@ -163,18 +166,23 @@ async fn run(comms: &Communicator, filename: String) -> Result<()> {
     let msg = std::str::from_utf8(&file_content)?;
     let escaped_msg: String = msg
         .split_terminator('\n')
-        .map(|line| format!("\x10{}", line))
-        .collect();
+        .fold(String::new(), |mut s, line| {
+            write!(&mut s, "\x10{}", line).ok();
+            s
+        });
     *comms.command.lock().await = Some(Command::Run { filename });
     comms.send_message(&escaped_msg).await?;
     Ok(())
 }
 
-async fn parse_ical_events(filename: &str) -> Result<Vec<(String, u32)>> {
+// parse all events later than now and return summary, optional location and timestamp
+async fn parse_ical_events(filename: &str) -> Result<Vec<(String, Option<String>, i64)>> {
     let file_content = utils::read_file(filename).await?;
     let ical = ical::parser::ical::IcalParser::new(file_content.as_slice())
         .next()
         .ok_or_else(|| anyhow::anyhow!("no calendar"))??;
+    let now = chrono::Local::now();
+    let mut events = Vec::new();
     for event in &ical.events {
         let mut dtstart = None;
         let mut summary = None;
@@ -187,30 +195,51 @@ async fn parse_ical_events(filename: &str) -> Result<Vec<(String, u32)>> {
                 _ => (),
             }
         }
-        eprintln!(
-            "event {:?} at time {:?} in {:?}",
-            summary, dtstart, location
-        );
+        if let Some(start) = dtstart {
+            let date = NaiveDateTime::parse_from_str(start, "%Y%m%dT%H%M%S%Z");
+            if let Ok(date) = date {
+                let date = date.and_local_timezone(Utc).unwrap();
+                if date > now {
+                    let summary = summary
+                        .cloned()
+                        .unwrap_or_else(|| "unknown event".to_string());
+                    events.push((summary, location.cloned(), date.timestamp()));
+                }
+            }
+        }
     }
-    todo!()
+    Ok(events)
 }
 
-// require("sched").setAlarm("mydayalarm", { // as an alarm on a date
-//   msg : "Wake up",
-//   date : "2022-04-04",
-//   t : 9 * 3600000 // 9 o'clock (in ms)
-// });
-
-// // Ensure the widget and alarm timer updates to schedule the new alarm properly
-// require("sched").reload();
+// NOTE: this will erase all existing calendar events
 async fn sync_calendar(comms: &Communicator, filename: String) -> Result<()> {
-    //TODO: should we mark events with a file id to remove if it gets cancelled ?
     let events = parse_ical_events(&filename).await?;
     *comms.command.lock().await = Some(Command::SyncCalendar {
         ical_filename: filename,
     });
-    todo!();
-    //comms.send_message(&msg).await?;
+    let mut msg = events.iter().fold(
+        "\x10let e=[];".to_string(),
+        |mut s, (summary, location, time)| {
+            if let Some(location) = location {
+                write!(
+                    &mut s,
+                    "e.push({{title:\"{}\", description: \"{}\", timestamp: {time}}});",
+                    summary, location
+                )
+                .ok();
+            } else {
+                write!(
+                    &mut s,
+                    "e.push({{title:\"{}\", timestamp: {time}}});",
+                    summary
+                )
+                .ok();
+            };
+            s
+        },
+    );
+    msg.push_str("require(\"Storage\").writeJSON(\"android.calendar.json\", e);");
+    comms.send_message(&msg).await?;
     Ok(())
 }
 
