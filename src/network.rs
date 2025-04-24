@@ -107,9 +107,9 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
     .try_fold(String::new(), |mut full_message, line| async move {
         match command.lock().await.as_ref() {
             None
-            | Some(Command::Run { filename: _ })
-            | Some(Command::App { filename: _ })
-            | Some(Command::Write { code: _ }) => {
+            | Some(Command::Run { .. })
+            | Some(Command::App { .. })
+            | Some(Command::Write { .. }) => {
                 if !line.starts_with('\x10') {
                     println!("{line}");
                     return Ok(full_message);
@@ -120,20 +120,21 @@ pub async fn receive_messages(comms: Arc<Communicator>) -> Result<()> {
 
         if line == END_TOKEN {
             //TODO: avoid re-locking
-            if let Some(Command::Get { filename: f }) = command.lock().await.as_ref() {
+            if let Some(Command::Get { filename }) = command.lock().await.as_ref() {
                 let bytes = full_message
                     .split_whitespace()
                     .map(|l| l.parse::<u8>().map_err(|e| e.into()))
                     .collect::<Result<Vec<u8>>>()
                     .unwrap();
-                crate::utils::save_file(f, &bytes)
+                crate::utils::save_file(filename, &bytes)
                     .await
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             }
             receive_notifier.notify_one();
             full_message.clear();
+        } else {
+            full_message.extend(line.chars().skip(1));
         }
-        full_message.extend(line.chars().skip(1));
         Ok(full_message)
     })
     .await?;

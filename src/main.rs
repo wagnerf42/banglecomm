@@ -34,14 +34,14 @@ async fn main() -> Result<()> {
 
     // spawn the receiver
     let recv_comms = comms.clone();
-    tokio::task::spawn(network::receive_messages(recv_comms));
+    tokio::task::spawn(async {
+        network::receive_messages(recv_comms)
+            .await
+            .expect("receiving messages failed")
+    });
 
     if let Some(command) = cli.commands {
-        let stay_alive = if let Command::App { filename: _ } = command {
-            true
-        } else {
-            false
-        };
+        let stay_alive = matches!(command, Command::App { .. });
         execute_cli_command(&comms, command).await?;
         if stay_alive {
             loop {
@@ -149,6 +149,7 @@ async fn app(comms: &Communicator, filename: String) -> Result<()> {
         .arg(&filename)
         .output()
         .await?;
+    anyhow::ensure!(uglified.status.success(), "uglifyjs failed");
     let escaped_msg: String = String::from_utf8(uglified.stdout)
         .unwrap()
         .split_terminator('\n')
